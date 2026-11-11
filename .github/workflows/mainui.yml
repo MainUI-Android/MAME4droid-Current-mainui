@@ -84,6 +84,10 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools
+      - name: The SDK platform upstream compiles against
+        run: |
+          sdk=$(grep -oE 'compileSdk(Version)? *=? *[0-9]+' android-MAME4droid/app/build.gradle | grep -oE '[0-9]+$' | head -1)
+          yes | sdkmanager --install "platforms;android-$sdk" > /dev/null
       # The MAME core (libMAME4droid.so) is built outside this repository, from MAME's sources: it comes
       # from upstream's release APK (the release being built, or the latest for the nightly).
       - name: MAME core from upstream's release
