@@ -47,6 +47,14 @@ public final class Mame4droidStates implements MainUIStateApi.Emulator {
     @Override public int slotCount() { return 10; }
 
     @Override
+    public boolean pause() {
+        Emulator.pause();
+        return Emulator.isPaused();
+    }
+
+    @Override public void resume() { Emulator.resume(); }
+
+    @Override
     public String save(int slot) throws Exception {
         File f = stateFile(slot);
         long before = f != null && f.isFile() ? f.lastModified() : 0;
