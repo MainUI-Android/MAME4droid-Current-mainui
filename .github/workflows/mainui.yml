@@ -87,7 +87,13 @@ jobs:
       - name: The SDK platform upstream compiles against
         run: |
           sdk=$(grep -oE 'compileSdk(Version)? *=? *[0-9]+' android-MAME4droid/app/build.gradle | grep -oE '[0-9]+$' | head -1)
-          yes | sdkmanager --install "platforms;android-$sdk" > /dev/null
+          if ! yes | sdkmanager --install "platforms;android-$sdk" > /dev/null 2>&1; then
+            # API 37 on is published as android-<api>.<minor>; upstream's AGP 8 asks for android-<api>.
+            p="$ANDROID_HOME/platforms"
+            yes | sdkmanager --install "platforms;android-$sdk.0" > /dev/null
+            cp -r "$p/android-$sdk.0" "$p/android-$sdk"
+            sed -i "s#platforms;android-$sdk.0#platforms;android-$sdk#" "$p/android-$sdk/package.xml"
+          fi
       # The MAME core (libMAME4droid.so) is built outside this repository, from MAME's sources: it comes
       # from upstream's release APK (the release being built, or the latest for the nightly).
       - name: MAME core from upstream's release
