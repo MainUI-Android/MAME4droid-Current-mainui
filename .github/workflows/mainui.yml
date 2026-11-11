@@ -1,0 +1,121 @@
+# MainUI-Android: builds MAME4droid with the MainUI State API and publishes it for MainUI.
+# Nightly: the maintenance session (00:00 PST) merges upstream; this (02:00 PST) merges again if it
+# hasn't and builds "nightly" (prerelease); when upstream has a new release, it also builds that
+# release with the patch on top as a stable release, which MainUI installs.
+# Signing: organization secrets MAINUI_KEYSTORE (base64), MAINUI_KEYSTORE_PASSWORD,
+# MAINUI_KEY_ALIAS, MAINUI_KEY_PASSWORD. Helpers: .github/mainui/ci.sh.
+name: MainUI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md']
+  schedule:
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: mainui
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: seleuco/MAME4droid-Current
+  UPSTREAM_BRANCH: main
+  STABLE_TAG_REGEX: '^v\.?[0-9]+(\.[0-9]+)*$'
+  GH_TOKEN: ${{ github.token }}
+  APK_NAME: mame4droid-mainui
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      channels: ${{ steps.plan.outputs.channels }}
+      tag: ${{ steps.stable.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Upstream's workflows off
+        run: bash .github/mainui/ci.sh quiet-upstream-ci
+      - name: Merge upstream
+        if: github.event_name == 'schedule'
+        run: bash .github/mainui/ci.sh sync
+      - name: Upstream release to build
+        id: stable
+        if: github.event_name != 'push'
+        run: bash .github/mainui/ci.sh stable-tag
+      - name: Plan
+        id: plan
+        run: |
+          # Nightly: unless this is the schedule and "nightly" is this commit's build already.
+          c=()
+          if [ "${{ github.event_name }}" != schedule ] || [ "$(git ls-remote origin refs/tags/nightly | cut -f1)" != "$(git rev-parse HEAD)" ]; then c+=('"nightly"'); fi
+          if [ -n "${{ steps.stable.outputs.tag }}" ]; then c+=('"stable"'); fi
+          echo "channels=[$(IFS=,; echo "${c[*]}")]" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.channels != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: ${{ fromJSON(needs.plan.outputs.channels) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+      - name: Stable source (upstream release + patch)
+        if: matrix.channel == 'stable'
+        run: bash .github/mainui/ci.sh prepare-stable "${{ needs.plan.outputs.tag }}"
+      - name: Submodules
+        run: git submodule update --init --recursive --jobs 8
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      # The MAME core (libMAME4droid.so) is built outside this repository, from MAME's sources: it comes
+      # from upstream's release APK (the release being built, or the latest for the nightly).
+      - name: MAME core from upstream's release
+        run: |
+          tag="${{ matrix.channel == 'stable' && needs.plan.outputs.tag || '' }}"
+          mkdir -p "$RUNNER_TEMP/core"
+          gh release download $tag -R "$UPSTREAM_REPO" -p '*.apk' -D "$RUNNER_TEMP/core"
+          apk=$(ls "$RUNNER_TEMP"/core/*.apk | head -1)
+          unzip -j -o "$apk" 'lib/arm64-v8a/libMAME4droid.so' -d android-MAME4droid/app/src/main/jniLibs/arm64-v8a/
+          ls -la android-MAME4droid/app/src/main/jniLibs/arm64-v8a/
+      - name: Version
+        run: bash .github/mainui/ci.sh version "${{ matrix.channel }}" "${{ needs.plan.outputs.tag }}"
+      - name: Build
+        working-directory: android-MAME4droid
+        run: chmod +x gradlew && ./gradlew --no-daemon --stacktrace :app:assembleRelease
+      - name: Sign
+        id: sign
+        env:
+          MAINUI_KEYSTORE: ${{ secrets.MAINUI_KEYSTORE }}
+          MAINUI_KEYSTORE_PASSWORD: ${{ secrets.MAINUI_KEYSTORE_PASSWORD }}
+          MAINUI_KEY_ALIAS: ${{ secrets.MAINUI_KEY_ALIAS }}
+          MAINUI_KEY_PASSWORD: ${{ secrets.MAINUI_KEY_PASSWORD }}
+        run: |
+          apk=$(ls android-MAME4droid/app/build/outputs/apk/release/*.apk | head -1)
+          cp "$apk" "$APK_NAME-unsigned.apk"
+          set +e; bash .github/mainui/ci.sh sign "$apk" "$APK_NAME.apk"; rc=$?; set -e
+          if [ $rc = 0 ]; then echo "signed=true" >> "$GITHUB_OUTPUT"; elif [ $rc != 2 ]; then exit $rc; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APK_NAME }}-${{ matrix.channel }}
+          path: ${{ env.APK_NAME }}*.apk
+          retention-days: 14
+      - name: Release
+        if: steps.sign.outputs.signed == 'true'
+        run: bash .github/mainui/ci.sh release "${{ matrix.channel }}" "${{ needs.plan.outputs.tag }}" "$APK_NAME.apk"

@@ -148,6 +148,9 @@ public class MAME4droid extends Activity {
 
 		super.onCreate(savedInstanceState);
 
+		// MainUI State API: MainUI (a frontend) saves and loads states directly.
+		io.github.mainui.stateapi.Mame4droidStates.attach(() -> mainHelper != null ? mainHelper.getInstallationDIR() : null);
+
 		//android.os.Debug.waitForDebugger();
 
 		Log.d("EMULATOR", "onCreate " + this);
@@ -408,6 +411,8 @@ public class MAME4droid extends Activity {
 	@Override
 	protected void onDestroy() {
 		super.onDestroy();
+		if (isFinishing())
+			io.github.mainui.stateapi.MainUIStateApi.detach(io.github.mainui.stateapi.Mame4droidStates.INSTANCE);
 		Log.d("EMULATOR", "onDestroy " + this);
 
 		View frame = this.findViewById(R.id.EmulatorFrame);
