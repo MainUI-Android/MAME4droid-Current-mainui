@@ -50,7 +50,11 @@ public final class Mame4droidStates implements MainUIStateApi.Emulator {
     /** Emulator.isPaused() is still true from before the game started, though it runs (a cold start). */
     private static volatile boolean staleStart;
 
-    public static void resumed(boolean r) { resumed = r; }
+    public static void resumed(boolean r) {
+        resumed = r;
+        // (The activity pauses or resumes the core right after: from then on its flag is real.)
+        if (Emulator.isEmulating()) staleStart = false;
+    }
 
     /** The native core has started, running (called by the emulation thread). */
     public static void started() { staleStart = Emulator.isPaused(); }
@@ -66,9 +70,12 @@ public final class Mame4droidStates implements MainUIStateApi.Emulator {
     /** MainUI's pause took effect (not one the user or MAME4droid's menu holds). */
     private static volatile boolean pausedByMainUi;
 
+    /** MAME4droid's own pause is lifted for a save or load ({@link #liftOwnPause}): still its own. */
+    private static volatile boolean lifted;
+
     @Override
     public boolean pause() {
-        if (!pausedByMainUi && paused()) return true;
+        if (lifted || (!pausedByMainUi && paused())) return true;
         Emulator.pause();
         staleStart = false;
         pausedByMainUi = Emulator.isPaused();
@@ -84,12 +91,21 @@ public final class Mame4droidStates implements MainUIStateApi.Emulator {
 
     @Override
     public boolean liftOwnPause() {
-        if (pausedByMainUi || !resumed || !paused()) return false;
+        // (Not behind the options menu: a save can't run while it is open.)
+        if (pausedByMainUi || !resumed || Emulator.isInOptions() || !paused()) return false;
+        lifted = true;
         Emulator.resume();
-        return !Emulator.isPaused();
+        if (Emulator.isPaused()) { lifted = false; return false; }
+        return true;
     }
 
-    @Override public void restoreOwnPause() { Emulator.pause(); }
+    @Override
+    public void restoreOwnPause() {
+        lifted = false;
+        pausedByMainUi = false;
+        // Only while the dialog that held it is still up.
+        if (DialogHelper.savedDialog != DialogHelper.DIALOG_NONE) Emulator.pause();
+    }
 
     @Override
     public String save(int slot) throws Exception {
