@@ -1039,6 +1039,7 @@ public class Emulator {
 				View emuView = mm.getEmuView();
 
 				isEmulating = true;
+				io.github.mainui.stateapi.Mame4droidStates.started(); // MainUI State API
 				runT();
 
 				// Persist SAF cache changes made during the session (savestates,

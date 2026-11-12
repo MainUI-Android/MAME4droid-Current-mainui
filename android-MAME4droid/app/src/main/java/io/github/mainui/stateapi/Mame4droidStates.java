@@ -3,6 +3,7 @@ package io.github.mainui.stateapi;
 import android.view.KeyEvent;
 
 import com.seleuco.mame4droid.Emulator;
+import com.seleuco.mame4droid.helpers.DialogHelper;
 
 import java.io.File;
 import java.util.concurrent.Callable;
@@ -41,7 +42,23 @@ public final class Mame4droidStates implements MainUIStateApi.Emulator {
 
     @Override
     public boolean isReady() {
-        return Emulator.isInGameButNotInMenu() && !Emulator.isPaused() && !Emulator.isInOptions() && !Emulator.isSaveorload();
+        return resumed && Emulator.isInGameButNotInMenu() && !paused() && !Emulator.isInOptions() && !Emulator.isSaveorload();
+    }
+
+    /** The emulator activity is in front. */
+    private static volatile boolean resumed;
+    /** Emulator.isPaused() is still true from before the game started, though it runs (a cold start). */
+    private static volatile boolean staleStart;
+
+    public static void resumed(boolean r) { resumed = r; }
+
+    /** The native core has started, running (called by the emulation thread). */
+    public static void started() { staleStart = Emulator.isPaused(); }
+
+    /** The game is really paused: Emulator's flag, unless left over from a cold start (a dialog of MAME4droid's pauses it). */
+    private static boolean paused() {
+        if (!Emulator.isPaused()) { staleStart = false; return false; }
+        return !staleStart || DialogHelper.savedDialog != DialogHelper.DIALOG_NONE;
     }
 
     @Override public int slotCount() { return 10; }
@@ -51,8 +68,9 @@ public final class Mame4droidStates implements MainUIStateApi.Emulator {
 
     @Override
     public boolean pause() {
-        if (Emulator.isPaused()) return true;
+        if (!pausedByMainUi && paused()) return true;
         Emulator.pause();
+        staleStart = false;
         pausedByMainUi = Emulator.isPaused();
         return pausedByMainUi;
     }
@@ -63,6 +81,15 @@ public final class Mame4droidStates implements MainUIStateApi.Emulator {
         pausedByMainUi = false;
         Emulator.resume();
     }
+
+    @Override
+    public boolean liftOwnPause() {
+        if (pausedByMainUi || !resumed || !paused()) return false;
+        Emulator.resume();
+        return !Emulator.isPaused();
+    }
+
+    @Override public void restoreOwnPause() { Emulator.pause(); }
 
     @Override
     public String save(int slot) throws Exception {

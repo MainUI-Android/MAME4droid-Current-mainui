@@ -326,6 +326,7 @@ public class MAME4droid extends Activity {
 	protected void onResume() {
 		Log.d("EMULATOR", "onResume " + this);
 		super.onResume();
+		io.github.mainui.stateapi.Mame4droidStates.resumed(true);
 
 		if (prefsHelper != null)
 			prefsHelper.resume();
@@ -357,6 +358,7 @@ public class MAME4droid extends Activity {
 	protected void onPause() {
 		Log.d("EMULATOR", "onPause " + this);
 		super.onPause();
+		io.github.mainui.stateapi.Mame4droidStates.resumed(false);
 		if (prefsHelper != null)
 			prefsHelper.pause();
 		if (!ControlCustomizer.isEnabled())
