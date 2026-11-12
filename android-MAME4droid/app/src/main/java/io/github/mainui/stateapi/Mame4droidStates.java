@@ -46,13 +46,23 @@ public final class Mame4droidStates implements MainUIStateApi.Emulator {
 
     @Override public int slotCount() { return 10; }
 
+    /** MainUI's pause took effect (not one the user or MAME4droid's menu holds). */
+    private static volatile boolean pausedByMainUi;
+
     @Override
     public boolean pause() {
+        if (Emulator.isPaused()) return true;
         Emulator.pause();
-        return Emulator.isPaused();
+        pausedByMainUi = Emulator.isPaused();
+        return pausedByMainUi;
     }
 
-    @Override public void resume() { Emulator.resume(); }
+    @Override
+    public void resume() {
+        if (!pausedByMainUi) return;
+        pausedByMainUi = false;
+        Emulator.resume();
+    }
 
     @Override
     public String save(int slot) throws Exception {
@@ -62,6 +72,19 @@ public final class Mame4droidStates implements MainUIStateApi.Emulator {
         if (f != null) {
             if (!MainUIStateApi.await(() -> f.isFile() && f.lastModified() != before, 15_000)) {
                 throw new IllegalStateException("MAME didn't save the state (some games can't be saved)");
+            }
+            // MAME empties the file first and writes the compressed state after: done once it stops changing.
+            final long[] last = {-1, -1};
+            final int[] same = {0};
+            if (!MainUIStateApi.await(() -> {
+                long len = f.length(), mod = f.lastModified();
+                same[0] = len > 0 && len == last[0] && mod == last[1] ? same[0] + 1 : 0;
+                last[0] = len;
+                last[1] = mod;
+                Thread.sleep(100);
+                return same[0] >= 3;
+            }, 15_000)) {
+                throw new IllegalStateException("MAME didn't finish saving the state");
             }
             return f.getAbsolutePath();
         }
